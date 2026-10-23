@@ -93,7 +93,7 @@ Note: time values are always in milliseconds.
 
 Note: the indices for each engine are stable within a game.
 
-Cards are an array with two elements, first the rank and then the suit. 2-10 represent the number cards, 11 is a Jack, 12 is a Queen, 13 is a King, and 14 is an Ace. Although the suit identities do not matter, we say that suit 0 represents Spades, 1 represents Clubs, 2 represents Hearts, and 3 represents Diamonds.
+Cards are an array with two elements, first the rank and then the suit. 2-10 represent the number cards, 11 is a Jack, 12 is a Queen, 13 is a King, and 14 is an Ace. Although which suit number represents which suit is not actually important, we say that suit 0 represents Spades, 1 represents Clubs, 2 represents Hearts, and 3 represents Diamonds.
 
 
 ## Game Action List File Format
