@@ -1,21 +1,28 @@
+use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+struct RunFailed;
 
 trait Engine {
-    fn start(temp_storage_path: &str);
+    fn start(&mut self, temp_storage_path: &Path) -> Result<Output, RunFailed>;
 
     fn run(
+        &mut self,
         min_bet_to_not_fold: usize,
         turn_time_ms: usize,
         time_bank_ms: usize,
-        game_params_path: &str,
-        game_state_path: &str,
-        game_actions_path: &str,
-        temp_storage_path: &str,
-    );
+        game_params_path: &Path,
+        game_state_path: &Path,
+        game_actions_path: &Path,
+        temp_storage_path: &Path,
+    ) -> Result<Output, RunFailed>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,22 +30,32 @@ pub struct ExecutableFileEngine {
     file_path: PathBuf,
 }
 
+impl ExecutableFileEngine {
+    fn new(file_path: PathBuf) -> Self {
+        Self { file_path }
+    }
+}
+
 impl Engine for ExecutableFileEngine {
-    fn start(temp_storage_path: &str) -> {
-        todo!()
+    fn start(&mut self, temp_storage_path: &Path) -> Result<Output, RunFailed> {
+        Command::new(&self.file_path)
+            .args(&[OsStr::new("START"), temp_storage_path.as_ref()])
+            .output()
+            .map_err(|_| RunFailed)
     }
 
     fn run(
+        &mut self,
         min_bet_to_not_fold: usize,
         turn_time_ms: usize,
         time_bank_ms: usize,
-        game_params_path: &str,
-        game_state_path: &str,
-        game_actions_path: &str,
-        temp_storage_path: &str,
-    ) -> {
+        game_params_path: &Path,
+        game_state_path: &Path,
+        game_actions_path: &Path,
+        temp_storage_path: &Path,
+    ) -> Result<Output, RunFailed> {
         todo!()
-    }    
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -106,21 +123,92 @@ enum Outcome {
     SecondEngineWins,
 }
 
-fn run_game(engine_1: impl Engine, engine_2: impl Engine) -> Outcome {
+#[derive(Debug)]
+enum RunGameError {
+    RunFailed,
+    IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for RunGameError {
+    fn from(value: std::io::Error) -> Self {
+        RunGameError::IoError(value)
+    }
+}
+
+fn run_game(
+    mut engine_1: impl Engine,
+    mut engine_2: impl Engine,
+    parameters: &Args,
+    log_path_1: &Path,
+    log_path_2: &Path,
+) -> Result<Outcome, RunGameError> {
+    let game_data_path = PathBuf::from(".").canonicalize()?.join("tmp");
+    let game_parameters_path = game_data_path.clone().join("game_parameters.json");
+    let game_state_path = game_data_path.clone().join("game_state.json");
+    let game_history_path = game_data_path.clone().join("game_history.txt");
+    let tmp_path_1 = game_data_path.clone().join("engine1");
+    let tmp_path_2 = game_data_path.clone().join("engine2");
+
+    let log_open_options = std::fs::OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .clone();
+    let mut logs_1 = log_open_options.open(log_path_1)?;
+    let mut logs_2 = log_open_options.open(log_path_2)?;
+
+    let start_output_1 = engine_1
+        .start(&tmp_path_1)
+        .map_err(|_| RunGameError::RunFailed)?;
+    logs_1.write(&start_output_1.stderr)?;
+    let name_1 = String::from_utf8_lossy(&start_output_1.stdout);
+    let start_output_2 = engine_2
+        .start(&tmp_path_2)
+        .map_err(|_| RunGameError::RunFailed)?;
+    logs_2.write(&start_output_2.stderr)?;
+    let name_2 = {
+        let mut name_2 = String::from_utf8_lossy(&start_output_2.stdout).into_owned();
+        if name_2 == name_1 {
+            name_2.push('2');
+        }
+        name_2
+    };
+
+    let params = GameParameters {
+        engines: vec![name_1.into_owned(), name_2],
+        small_blind: parameters.small_blind,
+        big_blind: parameters.big_blind,
+        ante: parameters.ante,
+        starting_funds: parameters.starting_funds,
+        starting_time_bank: parameters.time_bank_ms,
+    };
+
     todo!()
 }
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-    let engine_dirs: Vec<_> = get_engine_dirs(args.engines_dir.as_ref())?.collect();
-    for engine_dir in engine_dirs {
-        // run the build.sh
-    }
-    let pairings = engine_dirs.into_iter().array_combinations::<2>();
+    let engines: Vec<_> = get_engine_dirs(args.engines_dir.as_ref())?
+        .map(ExecutableFileEngine::new)
+        .enumerate()
+        .collect();
+    let pairings = engines.into_iter().array_combinations::<2>();
 
+    let log_paths_base = PathBuf::from(".").canonicalize()?.join("logs");
 
-    for [engine_1_dir, engine_2_dir] in pairings {
-        run_game(engine_1_dir, engine_2_dir);
+    let mut results = vec![];
+
+    for [(i1, engine_1), (i2, engine_2)] in pairings {
+        match run_game(
+            engine_1,
+            engine_2,
+            &args,
+            &log_paths_base.clone().join(i1.to_string()),
+            &log_paths_base.clone().join(i2.to_string()),
+        ) {
+            Ok(outcome) => results.push((i1, i2, outcome)),
+            Err(RunGameError::IoError(e)) => Err(e)?,
+            Err(RunGameError::RunFailed) => eprintln!("game between {i1} and {i2} failed"),
+        }
     }
 
     Ok(())

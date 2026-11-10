@@ -268,3 +268,40 @@ impl Hand {
         (best_hand, best_cards)
     }
 }
+
+pub const DECK: [Card; 52] = const {
+    let mut arr = [Card {
+        rank: Rank::Ace,
+        suit: Suit::Spades,
+    }; 52];
+    let mut n = 0;
+    while n < 52 {
+        arr[n] = Card {
+            rank: match n % 13 {
+                0 => Rank::Ace,
+                1 => Rank::Two,
+                2 => Rank::Three,
+                3 => Rank::Four,
+                4 => Rank::Five,
+                5 => Rank::Six,
+                6 => Rank::Seven,
+                7 => Rank::Eight,
+                8 => Rank::Nine,
+                9 => Rank::Ten,
+                10 => Rank::Jack,
+                11 => Rank::Queen,
+                12 => Rank::King,
+                _ => unreachable!(),
+            },
+            suit: match n / 13 {
+                0 => Suit::Spades,
+                1 => Suit::Clubs,
+                2 => Suit::Hearts,
+                3 => Suit::Diamonds,
+                _ => unreachable!(),
+            },
+        };
+        n += 1;
+    }
+    arr
+};
